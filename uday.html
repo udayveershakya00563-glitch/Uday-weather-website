@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weather Dashboard</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Font Awesome CDN -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <style>
+        body {
+            background: linear-gradient(135deg, #1e3a8a, #6b21a8);
+            min-height: 100vh;
+            color: white;
+            font-family: 'Arial', sans-serif;
+        }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 1rem;
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        .glass-card:hover {
+            transform: scale(1.05);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+        }
+        .gradient-text {
+            background: linear-gradient(90deg, #f59e0b, #ec4899);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        #map { height: 300px; border-radius: 1rem; }
+        .loading-spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #ec4899;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .aqi-circle {
+            position: relative;
+            width: 100px;
+            height: 100px;
+            background: conic-gradient(var(--aqi-color) calc(var(--aqi-value) * 0.72deg), #e5e7eb 0deg);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .aqi-circle::before {
+            content: '';
+            position: absolute;
+            width: 80px;
+            height: 80px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+        }
+        .aqi-circle span {
+            position: relative;
+            font-size: 1.5rem;
+            font-weight: bold;
+        }
+        @media (max-width: 640px) {
+            .glass-card { padding: 1rem; }
+            #map { height: 200px; }
+            .aqi-circle { width: 80px; height: 80px; }
+            .aqi-circle span { font-size: 1.2rem; }
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center p-4 sm:p-8">
+    <!-- Search Bar -->
+    <div class="w-full max-w-md mb-8">
+        <h1 class="text-3xl font-bold text-center gradient-text mb-4">Weather Dashboard</h1>
+        <div class="flex gap-2">
+            <input id="cityInput" type="text" placeholder="Enter city (e.g., Delhi)" class="w-full p-3 rounded-lg bg-white/20 text-white placeholder-gray-300 focus:outline-none focus:ring-2 focus:ring-pink-500">
+            <button id="searchBtn" class="p-3 bg-pink-500 rounded-lg hover:bg-pink-600"><i class="fas fa-search"></i></button>
+        </div>
+        <p id="errorMsg" class="text-red-400 text-center mt-2 hidden">City not found or API error. Try again.</p>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div id="loading" class="hidden loading-spinner"></div>
+
+    <!-- Main Content -->
+    <div id="content" class="hidden w-full max-w-5xl grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <!-- Weather Card -->
+        <div class="glass-card p-6">
+            <h2 class="text-xl font-semibold gradient-text mb-4">Current Weather</h2>
+            <div id="weatherData" class="space-y-4">
+                <div class="flex items-center">
+                    <i id="weatherIcon" class="fas fa-2x mr-2"></i>
+                    <p><span id="temperature"></span> °C</p>
+                </div>
+                <div class="flex items-center"><i class="fas fa-tint mr-2"></i><p><span id="humidity"></span> %</p></div>
+                <div class="flex items-center"><i class="fas fa-wind mr-2"></i><p><span id="windSpeed"></span> m/s</p></div>
+                <div class="flex items-center"><i class="fas fa-gauge mr-2"></i><p><span id="pressure"></span> hPa</p></div>
+            </div>
+        </div>
+
+        <!-- Sunrise & Sunset Card -->
+        <div class="glass-card p-6">
+            <h2 class="text-xl font-semibold gradient-text mb-4">Sunrise & Sunset</h2>
+            <div class="grid grid-cols-2 gap-4">
+                <div class="flex items-center">
+                    <i class="fas fa-sun text-yellow-400 mr-2"></i>
+                    <p>Sunrise: <span id="sunrise"></span></p>
+                </div>
+                <div class="flex items-center">
+                    <i class="fas fa-sunset text-orange-400 mr-2"></i>
+                    <p>Sunset: <span id="sunset"></span></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- AQI Card -->
+        <div class="glass-card p-6">
+            <h2 class="text-xl font-semibold gradient-text mb-4">Air Quality Index</h2>
+            <div class="flex flex-col items-center">
+                <div id="aqiCircle" class="aqi-circle mb-4"><span id="aqiValue"></span></div>
+                <p id="aqiStatus" class="text-center"></p>
+                <p class="text-sm text-gray-300 mt-2">Data from: <span id="aqiStation"></span></p>
+            </div>
+            <div id="pollutants" class="mt-4 grid grid-cols-2 gap-2 text-sm"></div>
+        </div>
+
+        <!-- Map View -->
+        <div class="glass-card p-6 col-span-1 md:col-span-2 lg:col-span-3">
+            <h2 class="text-xl font-semibold gradient-text mb-4">Location</h2>
+            <div id="map"></div>
+        </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const cityInput = document.getElementById('cityInput');
+        const searchBtn = document.getElementById('searchBtn');
+        const loading = document.getElementById('loading');
+        const content = document.getElementById('content');
+        const errorMsg = document.getElementById('errorMsg');
+
+        let map, marker;
+
+        // Custom fetch for Nominatim with User-Agent header
+        async function fetchGeo(url) {
+            const response = await fetch(url, {
+                headers: {
+                    'User-Agent': 'WeatherDashboard/1.0 (contact: example@email.com)'
+                }
+            });
+            return response;
+        }
+
+        // Initialize Leaflet Map
+        function initMap(lat, lon, city) {
+            if (map) map.remove();
+            map = L.map('map').setView([lat, lon], 10);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+            }).addTo(map);
+            marker = L.marker([lat, lon]).addTo(map).bindPopup(city).openPopup();
+        }
+
+        // Convert UNIX timestamp to 12-hour time
+        function formatTime(timestamp) {
+            const date = new Date(timestamp * 1000);
+            return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+        }
+
+        // Get weather icon based on Open-Meteo code
+        function getWeatherIcon(code) {
+            const icons = {
+                0: 'fa-sun', // Clear sky
+                1: 'fa-cloud-sun', // Mainly clear
+                2: 'fa-cloud', // Partly cloudy
+                3: 'fa-cloud', // Overcast
+                45: 'fa-smog', // Fog
+                51: 'fa-cloud-rain', // Drizzle
+                61: 'fa-cloud-showers-heavy', // Rain
+                95: 'fa-bolt' // Thunderstorm
+            };
+            return icons[code] || 'fa-cloud';
+        }
+
+        // Get AQI color and status
+        function getAQIStatus(aqi) {
+            if (aqi <= 50) return { color: '#00e400', status: 'Good' };
+            if (aqi <= 100) return { color: '#ffde33', status: 'Moderate' };
+            if (aqi <= 150) return { color: '#ff9933', status: 'Unhealthy for Sensitive Groups' };
+            if (aqi <= 200) return { color: '#cc0033', status: 'Unhealthy' };
+            if (aqi <= 300) return { color: '#660099', status: 'Very Unhealthy' };
+            return { color: '#7e0023', status: 'Hazardous' };
+        }
+
+        // Fetch data and update UI
+        async function fetchWeatherData(city) {
+            try {
+                loading.classList.remove('hidden');
+                content.classList.add('hidden');
+                errorMsg.classList.add('hidden');
+
+                let lat, lon, display_name;
+
+                // Geocoding API with custom fetch
+                const geoRes = await fetchGeo(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(city)}&format=json`);
+                if (!geoRes.ok) throw new Error(`Geocoding API error: ${geoRes.status}`);
+                const geoData = await geoRes.json();
+                console.log('Geocoding response:', geoData); // Debug log
+                if (!geoData[0]) throw new Error('City not found');
+
+                ({ lat, lon, display_name } = geoData[0]);
+
+                // Weather API
+                const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&hourly=relativehumidity_2m&daily=sunrise,sunset`);
+                if (!weatherRes.ok) throw new Error(`Weather API error: ${weatherRes.status}`);
+                const weatherData = await weatherRes.json();
+
+                // AQI API
+                const aqiRes = await fetch(`https://api.waqi.info/feed/geo:${lat};${lon}/?token=demo`);
+                if (!aqiRes.ok) throw new Error(`AQI API error: ${aqiRes.status}`);
+                const aqiData = await aqiRes.json();
+                if (aqiData.status !== 'ok') throw new Error('AQI data unavailable');
+
+                // Update Weather Card
+                const { temperature, windspeed, weathercode, pressure_msl } = weatherData.current_weather;
+                document.getElementById('temperature').textContent = Math.round(temperature);
+                document.getElementById('humidity').textContent = weatherData.hourly.relativehumidity_2m[0];
+                document.getElementById('windSpeed').textContent = windspeed.toFixed(1);
+                document.getElementById('pressure').textContent = Math.round(pressure_msl);
+                document.getElementById('weatherIcon').className = `fas ${getWeatherIcon(weathercode)} fa-2x mr-2`;
+
+                // Update Sunrise & Sunset
+                document.getElementById('sunrise').textContent = formatTime(weatherData.daily.sunrise[0]);
+                document.getElementById('sunset').textContent = formatTime(weatherData.daily.sunset[0]);
+
+                // Update AQI Card
+                const aqi = aqiData.data.aqi;
+                const { color, status } = getAQIStatus(aqi);
+                document.getElementById('aqiCircle').style.setProperty('--aqi-color', color);
+                document.getElementById('aqiCircle').style.setProperty('--aqi-value', aqi);
+                document.getElementById('aqiValue').textContent = aqi;
+                document.getElementById('aqiStatus').textContent = status;
+                document.getElementById('aqiStation').textContent = aqiData.data.city.name;
+
+                // Update Pollutants
+                const pollutants = aqiData.data.iaqi;
+                const pollutantList = document.getElementById('pollutants');
+                pollutantList.innerHTML = '';
+                ['pm25', 'pm10', 'no2', 'o3', 'so2', 'co'].forEach(p => {
+                    if (pollutants[p]) {
+                        const div = document.createElement('div');
+                        div.textContent = `${p.toUpperCase()}: ${pollutants[p].v} µg/m³`;
+                        pollutantList.appendChild(div);
+                    }
+                });
+
+                // Update Map
+                initMap(parseFloat(lat), parseFloat(lon), display_name);
+
+                // Show content
+                content.classList.remove('hidden');
+            } catch (error) {
+                console.error('Fetch error:', error); // Debug log
+                errorMsg.textContent = `Error: ${error.message}. Using default location.`;
+                errorMsg.classList.remove('hidden');
+                // Fallback to Delhi
+                fetchWeatherData('Delhi');
+            } finally {
+                loading.classList.add('hidden');
+            }
+        }
+
+        // Event Listeners
+        searchBtn.addEventListener('click', () => {
+            const city = cityInput.value.trim();
+            if (city) fetchWeatherData(city);
+        });
+        cityInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                const city = cityInput.value.trim();
+                if (city) fetchWeatherData(city);
+            }
+        });
+
+        // Initial fetch for default city
+        fetchWeatherData('Delhi');
+    </script>
+</body>
+</html>
